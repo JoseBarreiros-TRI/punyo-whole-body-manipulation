@@ -53,8 +53,10 @@ from .allegro_kuka.allegro_kuka_throw import AllegroKukaThrow
 from .allegro_kuka.allegro_kuka_two_arms_regrasping import AllegroKukaTwoArmsRegrasping
 from .allegro_kuka.allegro_kuka_two_arms_reorientation import AllegroKukaTwoArmsReorientation
 
-from .industreal.industreal_task_pegs_insert import IndustRealTaskPegsInsert
-from .industreal.industreal_task_gears_insert import IndustRealTaskGearsInsert
+# from .industreal.industreal_task_pegs_insert import IndustRealTaskPegsInsert
+# from .industreal.industreal_task_gears_insert import IndustRealTaskGearsInsert
+
+from .punyo_amp import PunyoAMP
 
 
 def resolve_allegro_kuka(cfg, *args, **kwargs):
@@ -101,8 +103,8 @@ isaacgym_task_map = {
     "FactoryTaskNutBoltPick": FactoryTaskNutBoltPick,
     "FactoryTaskNutBoltPlace": FactoryTaskNutBoltPlace,
     "FactoryTaskNutBoltScrew": FactoryTaskNutBoltScrew,
-    "IndustRealTaskPegsInsert": IndustRealTaskPegsInsert,
-    "IndustRealTaskGearsInsert": IndustRealTaskGearsInsert,
+    # "IndustRealTaskPegsInsert": IndustRealTaskPegsInsert,
+    # "IndustRealTaskGearsInsert": IndustRealTaskGearsInsert,
     "FrankaCabinet": FrankaCabinet,
     "FrankaCubeStack": FrankaCubeStack,
     "Humanoid": Humanoid,
@@ -111,4 +113,5 @@ isaacgym_task_map = {
     "Quadcopter": Quadcopter,
     "ShadowHand": ShadowHand,
     "Trifinger": Trifinger,
+    "PunyoV2AMP": PunyoAMP,
 }

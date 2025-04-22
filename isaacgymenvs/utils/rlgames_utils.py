@@ -25,7 +25,6 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 import os
 from collections import deque
 from typing import Callable, Dict, Tuple, Any
@@ -36,6 +35,7 @@ import numpy as np
 import torch
 from rl_games.common import env_configurations, vecenv
 from rl_games.common.algo_observer import AlgoObserver
+from rl_games.algos_torch import torch_ext
 
 from isaacgymenvs.tasks import isaacgym_task_map
 from isaacgymenvs.utils.utils import set_seed, flatten_dict
@@ -59,7 +59,7 @@ def get_rlgames_env_creator(
         rl_device: str,
         graphics_device_id: int,
         headless: bool,
-        # used to handle multi-gpu case
+        # Used to handle multi-gpu case
         multi_gpu: bool = False,
         post_create_hook: Callable = None,
         virtual_screen_capture: bool = False,
@@ -77,7 +77,7 @@ def get_rlgames_env_creator(
         multi_gpu: Whether to use multi gpu
         post_create_hook: Hooks to be called after environment creation.
             [Needed to setup WandB only for one of the RL Games instances when doing multiple GPUs]
-        virtual_screen_capture: Set to True to allow the users get captured screen in RGB array via `env.render(mode='rgb_array')`. 
+        virtual_screen_capture: Set to True to allow the users get captured screen in RGB array via `env.render(mode='rgb_array')`.
         force_render: Set to True to always force rendering in the steps (if the `control_freq_inv` is greater than 1 we suggest stting this arg to True)
     Returns:
         A VecTaskPython object.
@@ -87,24 +87,23 @@ def get_rlgames_env_creator(
         Creates the task from configurations and wraps it using RL-games wrappers if required.
         """
         if multi_gpu:
+            # import horovod.torch as hvd
 
-            local_rank = int(os.getenv("LOCAL_RANK", "0"))
-            global_rank = int(os.getenv("RANK", "0"))
+            # hvd.init()
 
-            # local rank of the GPU in a node
-            local_rank = int(os.getenv("LOCAL_RANK", "0"))
-            # global rank of the GPU
-            global_rank = int(os.getenv("RANK", "0"))
-            # total number of GPUs across all nodes
-            world_size = int(os.getenv("WORLD_SIZE", "1"))
+            # rank = hvd.rank()
 
-            print(f"global_rank = {global_rank} local_rank = {local_rank} world_size = {world_size}")
+            rank = int(os.getenv("LOCAL_RANK", "0"))
 
-            _sim_device = f'cuda:{local_rank}'
-            _rl_device = f'cuda:{local_rank}'
+            # set_seed(seed + rank)
 
-            task_config['rank'] = local_rank
-            task_config['rl_device'] = _rl_device
+            print("Horovod rank: ", rank)
+
+            _sim_device = f'cuda:{rank}'
+            _rl_device = f'cuda:{rank}'
+
+            task_config['rank'] = rank
+            task_config['rl_device'] = 'cuda:' + str(rank)
         else:
             _sim_device = sim_device
             _rl_device = rl_device
@@ -194,7 +193,7 @@ class RLGPUAlgoObserver(AlgoObserver):
                 value = torch.mean(infotensor)
                 self.writer.add_scalar('Episode/' + key, value, epoch_num)
             self.ep_infos.clear()
-        
+
         # log these if and only if we have new finished episodes
         if self.new_finished_episodes:
             for key in self.episode_cumulative_avg:
@@ -244,11 +243,11 @@ class RLGPUEnv(vecenv.IVecEnv):
         self.env = env_configurations.configurations[config_name]['env_creator'](**kwargs)
 
     def step(self, actions):
-        return self.env.step(actions)
+        return  self.env.step(actions)
 
     def reset(self):
         return self.env.reset()
-    
+
     def reset_done(self):
         return self.env.reset_done()
 
@@ -259,7 +258,6 @@ class RLGPUEnv(vecenv.IVecEnv):
         info = {}
         info['action_space'] = self.env.action_space
         info['observation_space'] = self.env.observation_space
-
         if hasattr(self.env, "amp_observation_space"):
             info['amp_observation_space'] = self.env.amp_observation_space
 
@@ -268,6 +266,7 @@ class RLGPUEnv(vecenv.IVecEnv):
             print(info['action_space'], info['observation_space'], info['state_space'])
         else:
             print(info['action_space'], info['observation_space'])
+        info['actor_mask'] = self.env.actor_mask
 
         return info
 
@@ -294,9 +293,8 @@ class RLGPUEnv(vecenv.IVecEnv):
         if hasattr(self.env, 'set_env_state'):
             self.env.set_env_state(env_state)
 
-
 class ComplexObsRLGPUEnv(vecenv.IVecEnv):
-    
+
     def __init__(
         self,
         config_name,
@@ -375,14 +373,14 @@ class ComplexObsRLGPUEnv(vecenv.IVecEnv):
             info[v['space_name']] = self.gen_obs_space(v['names'], v['concat'])
 
         return info
-    
+
     def gen_obs_dict(self, obs_dict, obs_names, concat):
         """Generate the RL Games observations given the observations from the environment."""
         if concat:
             return torch.cat([obs_dict[name] for name in obs_names], dim=1)
         else:
             return {k: obs_dict[k] for k in obs_names}
-            
+
 
     def gen_obs_space(self, obs_names, concat):
         """Generate the RL Games observation space given the observations from the environment."""
@@ -393,7 +391,7 @@ class ComplexObsRLGPUEnv(vecenv.IVecEnv):
                 shape=(sum([self.env.observation_space[s].shape[0] for s in obs_names]),),
                 dtype=np.float32,
             )
-        else:        
+        else:
             return gym.spaces.Dict(
                     {k: self.env.observation_space[k] for k in obs_names}
                 )
@@ -419,4 +417,4 @@ class ComplexObsRLGPUEnv(vecenv.IVecEnv):
 
     def set_env_state(self, env_state):
         if hasattr(self.env, 'set_env_state'):
-            self.env.set_env_state(env_state)                
+            self.env.set_env_state(env_state)

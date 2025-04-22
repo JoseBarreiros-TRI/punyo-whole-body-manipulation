@@ -26,7 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import torch 
+import torch
 
 from rl_games.algos_torch import torch_ext
 from rl_games.algos_torch.running_mean_std import RunningMeanStd
@@ -34,47 +34,41 @@ from rl_games.common.player import BasePlayer
 
 import isaacgymenvs.learning.common_player as common_player
 
-
 class AMPPlayerContinuous(common_player.CommonPlayer):
 
     def __init__(self, params):
-        config = params['config']
+        self.config = params['config']
 
-        self._normalize_amp_input = config.get('normalize_amp_input', True)
-        self._disc_reward_scale = config['disc_reward_scale']
-        self._print_disc_prediction = config.get('print_disc_prediction', False)
-        
+        self._normalize_amp_input = self.config.get('normalize_amp_input', True)
+        self._disc_reward_scale = self.config['disc_reward_scale']
+        self._print_disc_prediction = self.config.get('print_disc_prediction', False)
+
         super().__init__(params)
-        return
 
     def restore(self, fn):
         super().restore(fn)
         if self._normalize_amp_input:
             checkpoint = torch_ext.load_checkpoint(fn)
             self._amp_input_mean_std.load_state_dict(checkpoint['amp_input_mean_std'])
-        return
-    
+
     def _build_net(self, config):
         super()._build_net(config)
-
         if self._normalize_amp_input:
             self._amp_input_mean_std = RunningMeanStd(config['amp_input_shape']).to(self.device)
             self._amp_input_mean_std.eval()
-        return
 
     def _post_step(self, info):
         super()._post_step(info)
         if self._print_disc_prediction:
             self._amp_debug(info)
-        return
 
     def _build_net_config(self):
         config = super()._build_net_config()
-        if (hasattr(self, 'env')):
-            config['amp_input_shape'] = self.env.amp_observation_space.shape
-        else:
-            config['amp_input_shape'] = self.env_info['amp_observation_space']
-
+        config['amp_input_shape'] = self.env.amp_observation_space.shape
+        # The actor and critic networks have the same input size.
+        # A mask is used to zero the privileged observations to
+        # provide unprivileged observations to the actor.
+        config['actor_mask'] = self.env.actor_mask
         return config
 
     def _amp_debug(self, info):
@@ -88,7 +82,6 @@ class AMPPlayerContinuous(common_player.CommonPlayer):
             disc_pred = disc_pred.detach().cpu().numpy()[0, 0]
             disc_reward = disc_reward.cpu().numpy()[0, 0]
             print("disc_pred: ", disc_pred, disc_reward)
-        return
 
     def _preproc_amp_obs(self, amp_obs):
         if self._normalize_amp_input:
@@ -109,7 +102,7 @@ class AMPPlayerContinuous(common_player.CommonPlayer):
     def _calc_disc_rewards(self, amp_obs):
         with torch.no_grad():
             disc_logits = self._eval_disc(amp_obs)
-            prob = 1.0 / (1.0 + torch.exp(-disc_logits)) 
+            prob = 1.0 / (1.0 + torch.exp(-disc_logits))
             disc_r = -torch.log(torch.maximum(1 - prob, torch.tensor(0.0001, device=self.device)))
             disc_r *= self._disc_reward_scale
         return disc_r

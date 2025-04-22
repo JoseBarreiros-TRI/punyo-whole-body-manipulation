@@ -22,7 +22,7 @@ class Robot_Motion:
         self.tensor = None
         self.dof_vels = None
 
-class MotionLib:
+class MazeMotionLib:
     def __init__(
             self, motion_file_path,
             num_dofs, device,
@@ -75,17 +75,10 @@ class MotionLib:
         box_pos1 = torch.empty([n, 3], dtype=float, device=self._device)
         box_rot0 = torch.empty([n, 4], dtype=float, device=self._device)
         box_rot1 = torch.empty([n, 4], dtype=float, device=self._device)
-        lhand_pos0 = torch.empty([n, 3], dtype=float, device=self._device)
-        lhand_pos1 = torch.empty([n, 3], dtype=float, device=self._device)
-        rhand_pos0 = torch.empty([n, 3], dtype=float, device=self._device)
-        rhand_pos1 = torch.empty([n, 3], dtype=float, device=self._device)
-        lhand_rot0 = torch.empty([n, 4], dtype=float, device=self._device)
-        lhand_rot1 = torch.empty([n, 4], dtype=float, device=self._device)
-        rhand_rot0 = torch.empty([n, 4], dtype=float, device=self._device)
-        rhand_rot1 = torch.empty([n, 4], dtype=float, device=self._device)
         dof_vel = torch.empty([n, self._num_dof], dtype=float, device=self._device)
-        paw_pressures = torch.empty([n, 2], dtype=float, device=self._device)
-        floatie_pressures = torch.empty([n, 14], dtype=float, device=self._device)
+        ball_pressures = torch.empty([n, 1], dtype=float, device=self._device)
+        robot_binary_contact = torch.empty([n, 5], dtype=float, device=self._device)
+        box_binary_contact = torch.empty([n, 5], dtype=float, device=self._device)
         motion_len = self._motion_lengths[motion_ids]
         num_frames = self._motion_num_frames[motion_ids]
         dt = self._motion_dt[motion_ids]
@@ -95,85 +88,49 @@ class MotionLib:
         for uid in self.unique_ids:
             ids = np.where(motion_ids == uid)
             curr_motion = self._motions[uid]
+
             dof_pos0[ids, :] = curr_motion.dof_pos[frame_idx0[ids]]
             dof_pos1[ids, :] = curr_motion.dof_pos[frame_idx1[ids]]
 
             box_pos0[ids, :] = curr_motion.box_pos[frame_idx0[ids]]
             box_pos1[ids, :] = curr_motion.box_pos[frame_idx1[ids]]
 
-            box_rot0[ids, :] = curr_motion.box_rot[frame_idx0[ids]].squeeze(1)
-            box_rot1[ids, :] = curr_motion.box_rot[frame_idx1[ids]].squeeze(1)
-
-            if curr_motion.lhand_pos is not None:
-                lhand_pos0[ids, :] = curr_motion.lhand_pos[frame_idx0[ids]]
-                lhand_pos1[ids, :] = curr_motion.lhand_pos[frame_idx1[ids]]
-
-            if curr_motion.rhand_pos is not None:
-                rhand_pos0[ids, :] = curr_motion.rhand_pos[frame_idx0[ids]]
-                rhand_pos1[ids, :] = curr_motion.rhand_pos[frame_idx1[ids]]
-
-            if curr_motion.lhand_rot is not None:
-                lhand_rot0[ids, :] = curr_motion.lhand_rot[frame_idx0[ids]]
-                lhand_rot1[ids, :] = curr_motion.lhand_rot[frame_idx1[ids]]
-
-            if curr_motion.rhand_rot is not None:
-                rhand_rot0[ids, :] = curr_motion.rhand_rot[frame_idx0[ids]]
-                rhand_rot1[ids, :] = curr_motion.rhand_rot[frame_idx1[ids]]
+            box_rot0[ids, :] = curr_motion.box_rot[frame_idx0[ids]]
+            box_rot1[ids, :] = curr_motion.box_rot[frame_idx1[ids]]
 
             if curr_motion.dof_vels is not None:
                 dof_vel[ids, :] = curr_motion.dof_vels[frame_idx0[ids]]
 
-            if curr_motion.paw_pressures is not None:
-                paw_pressures[ids, :] = curr_motion.paw_pressures[frame_idx0[ids]]
+            if curr_motion.ball_pressures is not None:
+                ball_pressures[ids, :] = curr_motion.ball_pressures[frame_idx0[ids]]
 
-            if curr_motion.floatie_pressures is not None:
-                floatie_pressures[ids, :] = curr_motion.floatie_pressures[frame_idx0[ids]]
+            if curr_motion.robot_binary_contact is not None:
+                robot_binary_contact[ids, :] = curr_motion.robot_binary_contact[frame_idx0[ids]]
+            if curr_motion.box_binary_contact is not None:
+                box_binary_contact[ids, :] = curr_motion.box_binary_contact[frame_idx0[ids]]
 
         blend = to_torch(np.expand_dims(blend, axis=-1))
 
         dof_pos = (1.0 - blend) * dof_pos0 + blend * dof_pos1
         box_pos = (1.0 - blend) * box_pos0 + blend * box_pos1
 
-        if curr_motion.lhand_pos is not None:
-            lhand_pos = (1.0 - blend) * lhand_pos0 + blend * lhand_pos1
-        else:
-            lhand_pos = None
-
-        if curr_motion.rhand_pos is not None:
-            rhand_pos = (1.0 - blend) * rhand_pos0 + blend * rhand_pos1
-        else:
-            rhand_pos = None
-
-        if curr_motion.lhand_rot is not None:
-            # Make sure the w component of a quaternion is always positive
-            lhand_rot = quaternion_to_positive_w(
-                slerp(lhand_rot0, lhand_rot1, blend))
-        else:
-            lhand_rot = None
-
-        if curr_motion.rhand_rot is not None:
-            rhand_rot = quaternion_to_positive_w(
-                slerp(rhand_rot0, rhand_rot1, blend))
-        else:
-            rhand_rot = None
-
         box_rot = quaternion_to_positive_w(
             slerp(box_rot0, box_rot1, blend))
 
+        # Check for existence of observation types.
         if curr_motion.dof_vels is None:
             dof_vel = None
-
-        if curr_motion.paw_pressures is not None:
-            paw_pressures[paw_pressures>0] = 1
+        if curr_motion.robot_binary_contact is None:
+            robot_binary_contact = None
+        if curr_motion.box_binary_contact is None:
+            box_binary_contact = None
+        if curr_motion.ball_pressures is not None:
+            # Threshold the force magnitude to get binary contact state.
+            ball_pressures[ball_pressures>0] = 1
         else:
-            paw_pressures = None
+            ball_pressures = None
 
-        if curr_motion.floatie_pressures is not None:
-            floatie_pressures[floatie_pressures>0] = 1
-        else:
-            floatie_pressures = None
-
-        return box_pos, box_rot, dof_pos, dof_vel, lhand_pos, lhand_rot, rhand_pos, rhand_rot, paw_pressures, floatie_pressures
+        return box_pos, box_rot, dof_pos, dof_vel, robot_binary_contact, box_binary_contact
 
     def _load_motions(self, motion_file):
         self._motions = []
@@ -195,7 +152,7 @@ class MotionLib:
 
             curr_motion = Robot_Motion()
             curr_motion.tensor = torch.from_numpy(np.stack(curr_motion_pd['observations']['state'].values)[self.ignore_before_idx:,:]).to(self._device)
-            curr_motion.num_joints = self._num_dof
+            curr_motion.num_joints = 3
             curr_motion.dof_pos = curr_motion.tensor[:,:curr_motion.num_joints]
             if curr_motion.tensor.shape[1] > curr_motion.num_joints:
                 curr_motion.dof_vels = curr_motion.tensor[:,curr_motion.num_joints:]
@@ -219,32 +176,25 @@ class MotionLib:
             curr_motion.fps = 1.0 / curr_motion.dt
 
             try:
-                end_effectors_rpyxyz = torch.from_numpy(np.stack(curr_motion_pd['observations']['end_effectors_rpyxyz'].values)[self.ignore_before_idx:,:]).to(self._device)
-                lhand_state_ = end_effectors_rpyxyz[:,:6]
-                rhand_state_ = end_effectors_rpyxyz[:,6:]
-                lhand_state = torch.cat((lhand_state_[:,3:],quat_from_euler_xyz(lhand_state_[:,0], lhand_state_[:,1], lhand_state_[:,2]).squeeze(1)),axis=1)
-                rhand_state = torch.cat((rhand_state_[:,3:],quat_from_euler_xyz(rhand_state_[:,0], rhand_state_[:,1], rhand_state_[:,2]).squeeze(1)),axis=1)
-                curr_motion.lhand_pos = lhand_state[:,:3]
-                curr_motion.lhand_rot = lhand_state[:,3:]
-                curr_motion.rhand_pos = rhand_state[:,:3]
-                curr_motion.rhand_rot = rhand_state[:,3:]
+                ball_pressures = torch.from_numpy(np.stack(curr_motion_pd['observations']['ball_pressures'].values)[self.ignore_before_idx:,:]).to(self._device)
+                curr_motion.ball_pressures = ball_pressures
             except:
-                curr_motion.lhand_pos = None
-                curr_motion.lhand_rot = None
-                curr_motion.rhand_pos = None
-                curr_motion.rhand_rot = None
+                curr_motion.ball_pressures = None
+                print(f"Motion file does NOT have ball_pressures")
 
+            # Extract the binary contact states if available.
             try:
-                paw_pressures = torch.from_numpy(np.stack(curr_motion_pd['observations']['paw_pressures'].values)[self.ignore_before_idx:,:]).to(self._device)
-                curr_motion.paw_pressures = paw_pressures
+                robot_binary_contact = torch.from_numpy(np.stack(curr_motion_pd['observations']['robot_binary_contact'].values)[self.ignore_before_idx:,:]).to(self._device)
+                curr_motion.robot_binary_contact = robot_binary_contact
             except:
-                curr_motion.paw_pressures = None
-
+                curr_motion.robot_binary_contact = None
+                print(f"Motion file does NOT have robot_binary_contact")
             try:
-                floatie_pressures = torch.from_numpy(np.stack(curr_motion_pd['observations']['arm_pressures'].values)[self.ignore_before_idx:,:]).to(self._device)
-                curr_motion.floatie_pressures = floatie_pressures
+                box_binary_contact = torch.from_numpy(np.stack(curr_motion_pd['observations']['box_binary_contact'].values)[self.ignore_before_idx:,:]).to(self._device)
+                curr_motion.box_binary_contact = box_binary_contact
             except:
-                curr_motion.floatie_pressures = None
+                curr_motion.box_binary_contact = None
+                print(f"Motion file does NOT have box_binary_contact")
 
             motion_fps = curr_motion.fps
             curr_dt = curr_motion.dt

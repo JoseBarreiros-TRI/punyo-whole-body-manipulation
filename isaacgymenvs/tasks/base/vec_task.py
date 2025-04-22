@@ -25,17 +25,15 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-import os
-import time
-from datetime import datetime
-from os.path import join
+
+import copy
 from typing import Dict, Any, Tuple, List, Set
 
 import gym
 from gym import spaces
 
 from isaacgym import gymtorch, gymapi
-from isaacgymenvs.utils.torch_jit_utils import to_torch
+from isaacgym.torch_utils import to_torch
 from isaacgymenvs.utils.dr_utils import get_property_setter_map, get_property_getter_map, \
     get_default_setter_args, apply_random_samples, check_buckets, generate_random_samples
 
@@ -65,7 +63,7 @@ def _create_sim_once(gym, *args, **kwargs):
 
 
 class Env(ABC):
-    def __init__(self, config: Dict[str, Any], rl_device: str, sim_device: str, graphics_device_id: int, headless: bool): 
+    def __init__(self, config: Dict[str, Any], rl_device: str, sim_device: str, graphics_device_id: int, headless: bool):
         """Initialise the env.
 
         Args:
@@ -93,7 +91,7 @@ class Env(ABC):
         # if training in a headless mode
         self.headless = headless
 
-        enable_camera_sensors = config["env"].get("enableCameraSensors", False)
+        enable_camera_sensors = config.get("enableCameraSensors", False)
         self.graphics_device_id = graphics_device_id
         if enable_camera_sensors == False and self.headless == True:
             self.graphics_device_id = -1
@@ -120,18 +118,9 @@ class Env(ABC):
         # The learning algorithm tracks the total number of frames since the beginning of training and accounts for
         # experiments restart/resumes. This means this number can be > 0 right after initialization if we resume the
         # experiment.
-        self.total_train_env_frames: int = 0
+        self.total_train_env_frames = 0
 
-        # number of control steps
-        self.control_steps: int = 0
-
-        self.render_fps: int = config["env"].get("renderFPS", -1)
-        self.last_frame_time: float = 0.0
-
-        self.record_frames: bool = False
-        self.record_frames_dir = join("recorded_frames", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-
-    @abc.abstractmethod 
+    @abc.abstractmethod
     def allocate_buffers(self):
         """Create torch buffers for observations, rewards, actions dones and any additional data."""
 
@@ -184,31 +173,12 @@ class Env(ABC):
         """Get the number of observations in the environment."""
         return self.num_observations
 
-    def set_train_info(self, env_frames, *args, **kwargs):
-        """
-        Send the information in the direction algo->environment.
-        Most common use case: tell the environment how far along we are in the training process. This is useful
-        for implementing curriculums and things such as that.
-        """
-        self.total_train_env_frames = env_frames
-        # print(f'env_frames updated to {self.total_train_env_frames}')
-
-    def get_env_state(self):
-        """
-        Return serializable environment state to be saved to checkpoint.
-        Can be used for stateful training sessions, i.e. with adaptive curriculums.
-        """
-        return None
-
-    def set_env_state(self, env_state):
-        pass
-
 
 class VecTask(Env):
 
     metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": 24}
 
-    def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture: bool = False, force_render: bool = False): 
+    def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture: bool = False, force_render: bool = False):
         """Initialise the `VecTask`.
 
         Args:
@@ -216,11 +186,16 @@ class VecTask(Env):
             sim_device: the device to simulate physics on. eg. 'cuda:0' or 'cpu'
             graphics_device_id: the device ID to render with.
             headless: Set to False to disable viewer rendering.
-            virtual_screen_capture: Set to True to allow the users get captured screen in RGB array via `env.render(mode='rgb_array')`. 
+            virtual_screen_capture: Set to True to allow the users get captured screen in RGB array via `env.render(mode='rgb_array')`.
             force_render: Set to True to always force rendering in the steps (if the `control_freq_inv` is greater than 1 we suggest stting this arg to True)
         """
         # super().__init__(config, rl_device, sim_device, graphics_device_id, headless, use_dict_obs)
         super().__init__(config, rl_device, sim_device, graphics_device_id, headless)
+
+        # By default the actor mask is set to one, thus actor and critic observations are the same.
+        # The mask can be set in the environment if desired.
+        self.actor_mask = torch.ones(self.num_observations , device=rl_device)
+
         self.virtual_screen_capture = virtual_screen_capture
         self.virtual_display = None
         if self.virtual_screen_capture:
@@ -237,8 +212,6 @@ class VecTask(Env):
         else:
             msg = f"Invalid physics engine backend: {self.cfg['physics_engine']}"
             raise ValueError(msg)
-
-        self.dt: float = self.sim_params.dt
 
         # optimization flags for pytorch JIT
         torch._C._jit_set_profiling_mode(False)
@@ -283,14 +256,12 @@ class VecTask(Env):
                 self.viewer, gymapi.KEY_ESCAPE, "QUIT")
             self.gym.subscribe_viewer_keyboard_event(
                 self.viewer, gymapi.KEY_V, "toggle_viewer_sync")
-            self.gym.subscribe_viewer_keyboard_event(
-                self.viewer, gymapi.KEY_R, "record_frames")
 
             # set the camera position based on up axis
             sim_params = self.gym.get_sim_params(self.sim)
             if sim_params.up_axis == gymapi.UP_AXIS_Z:
-                cam_pos = gymapi.Vec3(20.0, 25.0, 3.0)
-                cam_target = gymapi.Vec3(10.0, 15.0, 0.0)
+                cam_pos = gymapi.Vec3(24.0, 23.0, 2.5)
+                cam_target = gymapi.Vec3(5.0, 0.0, -10.0)
             else:
                 cam_pos = gymapi.Vec3(20.0, 3.0, 25.0)
                 cam_target = gymapi.Vec3(10.0, 0.0, 15.0)
@@ -388,8 +359,6 @@ class VecTask(Env):
         # compute observations, rewards, resets, ...
         self.post_physics_step()
 
-        self.control_steps += 1
-
         # fill time out buffer: set to 1 if we reached the max episode length AND the reset buffer is 1. Timeout == 1 makes sense only if the reset buffer is 1.
         self.timeout_buf = (self.progress_buf >= self.max_episode_length - 1) & (self.reset_buf != 0)
 
@@ -418,9 +387,9 @@ class VecTask(Env):
         return actions
 
     def reset_idx(self, env_idx):
-        """Reset environment with indces in env_idx. 
+        """Reset environment with indces in env_idx.
         Should be implemented in an environment class inherited from VecTask.
-        """  
+        """
         pass
 
     def reset(self):
@@ -467,8 +436,6 @@ class VecTask(Env):
                     sys.exit()
                 elif evt.action == "toggle_viewer_sync" and evt.value > 0:
                     self.enable_viewer_sync = not self.enable_viewer_sync
-                elif evt.action == "record_frames" and evt.value > 0:
-                    self.record_frames = not self.record_frames
 
             # fetch results
             if self.device != 'cpu':
@@ -483,29 +450,8 @@ class VecTask(Env):
                 # This synchronizes the physics simulation with the rendering rate.
                 self.gym.sync_frame_time(self.sim)
 
-                # it seems like in some cases sync_frame_time still results in higher-than-realtime framerate
-                # this code will slow down the rendering to real time
-                now = time.time()
-                delta = now - self.last_frame_time
-                if self.render_fps < 0:
-                    # render at control frequency
-                    render_dt = self.dt * self.control_freq_inv  # render every control step
-                else:
-                    render_dt = 1.0 / self.render_fps
-
-                if delta < render_dt:
-                    time.sleep(render_dt - delta)
-
-                self.last_frame_time = time.time()
-
             else:
                 self.gym.poll_viewer_events(self.viewer)
-
-            if self.record_frames:
-                if not os.path.isdir(self.record_frames_dir):
-                    os.makedirs(self.record_frames_dir, exist_ok=True)
-
-                self.gym.write_viewer_image_to_file(self.viewer, join(self.record_frames_dir, f"frame_{self.control_steps}.png"))
 
             if self.virtual_display and mode == "rgb_array":
                 img = self.virtual_display.grab()
@@ -649,8 +595,12 @@ class VecTask(Env):
             if nonphysical_param in dr_params and do_nonenv_randomize:
                 dist = dr_params[nonphysical_param]["distribution"]
                 op_type = dr_params[nonphysical_param]["operation"]
-                sched_type = dr_params[nonphysical_param]["schedule"] if "schedule" in dr_params[nonphysical_param] else None
-                sched_step = dr_params[nonphysical_param]["schedule_steps"] if "schedule" in dr_params[nonphysical_param] else None
+                if "schedule" in dr_params[nonphysical_param]:
+                    sched_type = dr_params[nonphysical_param]["schedule"]
+                    sched_step = dr_params[nonphysical_param]["schedule_steps"]
+                else:
+                    sched_type = None
+                    sched_step = None
                 op = operator.add if op_type == 'additive' else operator.mul
 
                 if sched_type == 'linear':
@@ -746,21 +696,21 @@ class VecTask(Env):
         # randomise all attributes of each actor (hand, cube etc..)
         # actor_properties are (stiffness, damping etc..)
 
-        # Loop over actors, then loop over envs, then loop over their props 
-        # and lastly loop over the ranges of the params 
+        # Loop over actors, then loop over envs, then loop over their props
+        # and lastly loop over the ranges of the params
 
         for actor, actor_properties in dr_params["actor_params"].items():
 
-            # Loop over all envs as this part is not tensorised yet 
+            # Loop over all envs as this part is not tensorised yet
             for env_id in env_ids:
                 env = self.envs[env_id]
                 handle = self.gym.find_actor_handle(env, actor)
                 extern_sample = self.extern_actor_params[env_id]
 
-                # randomise dof_props, rigid_body, rigid_shape properties 
+                # randomise dof_props, rigid_body, rigid_shape properties
                 # all obtained from the YAML file
-                # EXAMPLE: prop name: dof_properties, rigid_body_properties, rigid_shape properties  
-                #          prop_attrs: 
+                # EXAMPLE: prop name: dof_properties, rigid_body_properties, rigid_shape properties
+                #          prop_attrs:
                 #               {'damping': {'range': [0.3, 3.0], 'operation': 'scaling', 'distribution': 'loguniform'}
                 #               {'stiffness': {'range': [0.75, 1.5], 'operation': 'scaling', 'distribution': 'loguniform'}
                 for prop_name, prop_attrs in actor_properties.items():
