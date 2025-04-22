@@ -1,48 +1,45 @@
 """Installation script for the 'isaacgymenvs' python package."""
 
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
-
 from setuptools import setup, find_packages
-
 import os
 
 root_dir = os.path.dirname(os.path.realpath(__file__))
 
-
-# Minimum dependencies required prior to installation
 INSTALL_REQUIRES = [
-    # RL
+    # RL and Simulation
     "gym==0.23.1",
-    "torch",
-    "omegaconf",
+    "torch>=2.1.0",
+    "omegaconf>=2.1.1",
     "termcolor",
-    "jinja2",
-    "hydra-core>=1.2",
-    "rl-games>=1.6.0",
+    "hydra-core>=1.1",
+    "rl-games==1.6.0",
+    
+    # Visualization & Analysis
+    "matplotlib",
+    "pandas",
+    "dtw-python",
+
+    # Utilities
     "pyvirtualdisplay",
-    "urdfpy==0.0.22",
-    "pysdf==0.1.9",
-    "warp-lang==0.10.1",
-    "trimesh==3.23.5",
-    ]
+    "icecream",
+    "pickle5; python_version<'3.8'",  # Only needed for older Python
+]
 
-
-
-# Installation operation
 setup(
     name="isaacgymenvs",
+    version="1.3.4",
     author="NVIDIA",
-    version="1.5.1",
     description="Benchmark environments for high-speed robot learning in NVIDIA IsaacGym.",
-    keywords=["robotics", "rl"],
+    keywords=["robotics", "reinforcement learning", "isaacgym", "rl"],
     include_package_data=True,
-    python_requires=">=3.6",
+    python_requires=">=3.7",
     install_requires=INSTALL_REQUIRES,
     packages=find_packages("."),
-    classifiers=["Natural Language :: English", "Programming Language :: Python :: 3.6, 3.7, 3.8"],
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Operating System :: POSIX :: Linux",
+        "License :: OSI Approved :: Apache Software License",
+        "Natural Language :: English",
+    ],
     zip_safe=False,
 )
-
-# EOF
